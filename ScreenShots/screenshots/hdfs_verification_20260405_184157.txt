@@ -1,0 +1,22 @@
+HDFS Verification — dim. 05 avril 2026 18:41:57 +01
+================================
+drwxr-xr-x   - root supergroup          0 2026-04-05 17:38 /data/cybersecurity/batch
+drwxr-xr-x   - root supergroup          0 2026-04-05 17:38 /data/cybersecurity/batch/attack_patterns
+drwxr-xr-x   - root supergroup          0 2026-04-05 17:38 /data/cybersecurity/batch/port_scans
+drwxr-xr-x   - root supergroup          0 2026-04-05 17:38 /data/cybersecurity/batch/threat_timeline
+drwxr-xr-x   - root supergroup          0 2026-04-05 17:38 /data/cybersecurity/logs
+drwxr-xr-x   - root supergroup          0 2026-04-05 17:38 /data/cybersecurity/logs/year=2023
+drwxr-xr-x   - root supergroup          0 2026-04-05 17:38 /data/cybersecurity/logs/year=2023/month=10
+drwxr-xr-x   - root supergroup          0 2026-04-05 17:39 /data/cybersecurity/logs/year=2023/month=10/day=15
+-rw-r--r--   2 root supergroup  874358689 2026-04-05 17:39 /data/cybersecurity/logs/year=2023/month=10/day=15/cybersecurity_threat_detection_logs.csv
+drwxr-xr-x   - root supergroup          0 2026-04-05 17:38 /data/cybersecurity/logs/year=2023/month=10/day=16
+drwxr-xr-x   - root supergroup          0 2026-04-05 17:38 /data/cybersecurity/logs/year=2023/month=10/day=17
+drwxr-xr-x   - root supergroup          0 2026-04-05 17:38 /data/cybersecurity/logs/year=2023/month=11
+drwxr-xr-x   - root supergroup          0 2026-04-05 17:38 /data/cybersecurity/logs/year=2023/month=11/day=01
+drwxr-xr-x   - root supergroup          0 2026-04-05 17:38 /data/cybersecurity/logs/year=2023/month=11/day=02
+drwxr-xr-x   - root supergroup          0 2026-04-05 17:39 /data/cybersecurity/raw
+-rw-r--r--   2 root supergroup  874358689 2026-04-05 17:39 /data/cybersecurity/raw/cybersecurity_threat_detection_logs.csv
+
+0        0      /data/cybersecurity/batch
+833.9 M  1.6 G  /data/cybersecurity/logs
+833.9 M  1.6 G  /data/cybersecurity/raw

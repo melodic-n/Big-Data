@@ -1,98 +1,24 @@
-# HBase Setup for Cybersecurity Threat Detection – Complete Guide
+# ⚡ SOC Batch Processing Layer
 
-This guide explains how to integrate HBase into your Hadoop + Spark architecture as a serving layer for cybersecurity analytics.
+This layer is responsible for the large-scale analysis of cybersecurity logs stored in HDFS. It performs threat detection, IP reputation scoring, and timeline aggregation, then stores the results in **Apache HBase**.
 
----
+## 🚀 Key Features
 
-## Architecture Overview
+* **Parallel Writing:** Optimized using PySpark's `foreachPartition` to write data directly from executors to HBase Thrift, avoiding Driver bottlenecks.
+* **Incremental Processing:** Implements a **Watermarking** mechanism to track the last processed date and only analyze new log partitions.
+* **Multi-threaded Ingestion:** Uses a custom parallel writer with `happybase` to maximize write throughput to HBase.
+* **Automated Orchestration:** Includes a `setup.sh` script that manages service health (YARN, Thrift) and table creation.
 
-```
-HDFS (raw logs)
-      ↓
-Spark Batch (incremental processing)
-      ↓
-HBase Tables (serving layer)
-      ↓
-Dashboard / Queries
-```
+## 🛠️ Tech Stack
 
-### Description
-- HDFS stores raw logs
-- Spark processes logs
-- HBase stores processed data
-- Dashboard visualizes results
+* **Engine:** Apache Spark (PySpark)
+* **Storage:** Hadoop HDFS (Input) & Apache HBase (Output)
+* **Communication:** HBase Thrift Server & Happybase
+* **Resource Management:** Apache Hadoop YARN
 
----
+## 📂 Structure
 
-## File 1: Dockerfile.hbase
-
-```dockerfile
-FROM dajobe/hbase:latest
-
-USER root
-
-RUN apt-get update -qq && \
-    apt-get install -y --no-install-recommends openjdk-8-jdk-headless && \
-    rm -rf /var/lib/apt/lists/*
-
-ENV JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
-ENV PATH=$JAVA_HOME/bin:$PATH
-```
-
----
-
-## File 2: docker-compose.yml
-
-```yaml
-hbase-master:
-  build:
-    context: .
-    dockerfile: Dockerfile.hbase
-  image: hbase-fixed:latest
-  container_name: hbase-master
-  hostname: hbase-master
-  tty: true
-  stdin_open: true
-  ports:
-    - "16000:16000"
-    - "16010:16010"
-    - "16020:16020"
-    - "16030:16030"
-    - "2181:2181"
-  environment:
-    - JAVA_HOME=/usr/lib/jvm/java-8-openjdk-amd64
-  volumes:
-    - hbase_data:/data/hbase
-  depends_on:
-    - hadoop-master
-
-volumes:
-  hbase_data:
-```
-
----
-
-## File 3: hbase_setup.sh
-
-```bash
-#!/bin/bash
-
-echo "
-create 'attacks', 'info'
-create 'ip_reputation', 'info'
-create 'threat_timeline', 'info'
-" | hbase shell
-```
-
----
-
-## Commands
-
-```bash
-docker-compose build hbase-master
-docker-compose up -d
-docker exec -it hbase-master bash
-chmod +x hbase_setup.sh
-./hbase_setup.sh
-echo "list" | hbase shell
-```
+```text
+batch-layer/
+├── batch_hbase.py      # The Spark processing logic (Analysis + Parallel Write)
+├── setup.sh    # Orchestrator: Checks YARN/HBase, Setup Tables, Submits Job

@@ -1,6 +1,8 @@
+version: "3.9"
+
 # ============================================================
 # Cybersecurity Threat Detection - Lambda Architecture Stack
-# Services: Hadoop (3 nodes) + HBase + Zookeeper + Kafka + Spark + Cassandra
+# Hadoop + Kafka + Cassandra + InfluxDB + Grafana
 # ============================================================
 
 services:
@@ -13,9 +15,9 @@ services:
     tty: true
     stdin_open: true
     ports:
-      - "9870:9870"   # HDFS Web UI
-      - "9000:9000"   # HDFS NameNode
-      - "8088:8088"   # YARN ResourceManager UI
+      - "9870:9870"
+      - "9000:9000"
+      - "8088:8088"
     environment:
       - CLUSTER_NAME=cybersecurity-cluster
       - CORE_CONF_fs_defaultFS=hdfs://hadoop-master:9000
@@ -25,7 +27,7 @@ services:
     networks:
       - cybernetwork
 
-  # ─── HADOOP DATANODE 1 ────────────────────────────────────
+  # ─── HADOOP WORKERS ───────────────────────────────────────
   hadoop-worker1:
     image: liliasfaxi/hadoop-cluster:latest
     container_name: hadoop-worker1
@@ -41,7 +43,6 @@ services:
     networks:
       - cybernetwork
 
-  # ─── HADOOP DATANODE 2 ────────────────────────────────────
   hadoop-worker2:
     image: liliasfaxi/hadoop-cluster:latest
     container_name: hadoop-worker2
@@ -57,7 +58,94 @@ services:
     networks:
       - cybernetwork
 
-  # ─── HBASE MASTER ─────────────────────────────────────────
+  # ─── ZOOKEEPER ────────────────────────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    hostname: zookeeper
+    ports:
+      - "2182:2181"
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+      ZOOKEEPER_TICK_TIME: 2000
+    volumes:
+      - zookeeper_data:/var/lib/zookeeper/data
+      - zookeeper_log:/var/lib/zookeeper/log
+    networks:
+      - cybernetwork
+
+  # ─── KAFKA ────────────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    hostname: kafka
+    depends_on:
+      - zookeeper
+    ports:
+      - "9092:9092"
+      - "29092:29092"
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+    volumes:
+      - kafka_data:/var/lib/kafka/data
+    networks:
+      - cybernetwork
+
+  # ─── CASSANDRA ────────────────────────────────────────────
+  cassandra:
+    image: cassandra:4.1
+    container_name: cassandra
+    hostname: cassandra
+    ports:
+      - "9042:9042"
+    environment:
+      CASSANDRA_CLUSTER_NAME: sitcn-cluster
+      MAX_HEAP_SIZE: 512M
+      HEAP_NEWSIZE: 100M
+    volumes:
+      - cassandra_data:/var/lib/cassandra
+    networks:
+      - cybernetwork
+
+  # ─── INFLUXDB ─────────────────────────────────────────────
+  influxdb:
+    image: influxdb:2.7
+    container_name: influxdb
+    hostname: influxdb
+    ports:
+      - "8086:8086"
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=admin123
+      - DOCKER_INFLUXDB_INIT_ORG=cyber-org
+      - DOCKER_INFLUXDB_INIT_BUCKET=cyber-bucket
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=super-token
+    volumes:
+      - influxdb_data:/var/lib/influxdb2
+    networks:
+      - cybernetwork
+
+  # ─── GRAFANA ─────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    hostname: grafana
+    ports:
+      - "3000:3000"
+    environment:
+      - GF_SECURITY_ADMIN_USER=admin
+      - GF_SECURITY_ADMIN_PASSWORD=admin
+    volumes:
+      - grafana_data:/var/lib/grafana
+    depends_on:
+      - influxdb
+    networks:
+      - cybernetwork
   hbase:
     image: dajobe/hbase:latest
     container_name: hbase
@@ -74,82 +162,6 @@ services:
       - hbase_data:/data/hbase
     networks:
       - cybernetwork
-
-  # ─── ZOOKEEPER (For Kafka) ────────────────────────────────
-  zookeeper:
-    image: confluentinc/cp-zookeeper:7.5.0
-    container_name: zookeeper
-    hostname: zookeeper
-    ports:
-      - "2182:2181"   # Host:2182 باش ما يتصادمش مع HBase Zookeeper
-    environment:
-      ZOOKEEPER_CLIENT_PORT: 2181
-      ZOOKEEPER_TICK_TIME: 2000
-    volumes:
-      - zookeeper_data:/var/lib/zookeeper/data
-      - zookeeper_log:/var/lib/zookeeper/log
-    healthcheck:
-      test: ["CMD", "bash", "-c", "echo ruok | nc localhost 2181"]
-      interval: 10s
-      timeout: 5s
-      retries: 5
-    networks:
-      - cybernetwork
-
-  # ─── KAFKA ────────────────────────────────────────────────
-  kafka:
-    image: confluentinc/cp-kafka:7.5.0
-    container_name: kafka
-    hostname: kafka
-    depends_on:
-      zookeeper:
-        condition: service_healthy
-    ports:
-      - "9092:9092"     # Host access
-      - "29092:29092"   # Internal access (Spark)
-    environment:
-      KAFKA_BROKER_ID: 1
-      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
-      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
-      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://localhost:9092
-      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
-      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
-    volumes:
-      - kafka_data:/var/lib/kafka/data
-    healthcheck:
-      test: ["CMD", "kafka-broker-api-versions", "--bootstrap-server", "localhost:9092"]
-      interval: 15s
-      timeout: 10s
-      retries: 10
-    networks:
-      - cybernetwork
-
-  # ──────────────────────────────────────────────────────────
-  # CASSANDRA — NoSQL storage for streaming results
-  # ──────────────────────────────────────────────────────────
-  cassandra:
-    image: cassandra:4.1
-    container_name: cassandra
-    hostname: cassandra
-    ports:
-      - "9042:9042"   # CQL native transport
-    environment:
-      CASSANDRA_CLUSTER_NAME: sitcn-cluster
-      CASSANDRA_DC: dc1
-      CASSANDRA_RACK: rack1
-      CASSANDRA_ENDPOINT_SNITCH: GossipingPropertyFileSnitch
-      MAX_HEAP_SIZE: 512M
-      HEAP_NEWSIZE: 100M
-    healthcheck:
-      test: ["CMD", "cqlsh", "-e", "describe keyspaces"]
-      interval: 30s
-      timeout: 10s
-      retries: 10
-    volumes:
-      - cassandra_data:/var/lib/cassandra
-    networks:
-      - cybernetwork
-
 # ============================================================
 # VOLUMES
 # ============================================================
@@ -157,12 +169,13 @@ volumes:
   hadoop_namenode:
   hadoop_datanode1:
   hadoop_datanode2:
-  hbase_data:
   kafka_data:
   zookeeper_data:
   zookeeper_log:
   cassandra_data:
-
+  influxdb_data:
+  grafana_data:
+  hbase_data:
 # ============================================================
 # NETWORK
 # ============================================================

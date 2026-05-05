@@ -105,10 +105,6 @@ def _escape_field_str(v: str) -> str:
     return '"' + str(v).replace('"', '\\"') + '"'
 
 def _write_to_influx(lines: list):
-    """
-    Send a list of line‑protocol strings to InfluxDB via its HTTP API.
-    Uses only the 'requests' library (no influxdb_client dependency).
-    """
     if not lines:
         return
     url = f"{INFLUX_URL}/api/v2/write?org={INFLUX_ORG}&bucket={INFLUX_BUCKET}&precision=ns"
@@ -117,13 +113,25 @@ def _write_to_influx(lines: list):
         "Content-Type":  "text/plain; charset=utf-8"
     }
     body = "\n".join(lines).encode("utf-8")
-    try:
-        resp = requests.post(url, data=body, headers=headers, timeout=10)
-        if resp.status_code != 204:
-            print(f"[InfluxDB NON-204] {resp.status_code}: {resp.text}")
-    except Exception as e:
-        print(f"[InfluxDB ERROR] {e}")
 
+    # Try twice with a longer timeout
+    for attempt in (1, 2):
+        try:
+            resp = requests.post(url, data=body, headers=headers, timeout=60)
+            if resp.status_code == 204:
+                return  # success
+            else:
+                print(f"[InfluxDB NON-204] {resp.status_code}: {resp.text}")
+                return
+        except requests.exceptions.Timeout:
+            if attempt == 1:
+                print(f"[InfluxDB TIMEOUT] Retrying...")
+                continue
+            else:
+                print(f"[InfluxDB TIMEOUT] Failed after 2 attempts")
+        except Exception as e:
+            print(f"[InfluxDB ERROR] {e}")
+            return
 def influx_brute_force_writer(batch_df, batch_id):
     rows = batch_df.select(
         "source_ip", "window_start", "failed_count", "threat_score"

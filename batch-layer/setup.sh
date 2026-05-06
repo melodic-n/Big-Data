@@ -1,20 +1,22 @@
 #!/bin/bash
 # =============================================================================
-# setup_and_run.sh — The Ultimate Bulletproof SOC Pipeline Orchestrator
+# setup_and_run.sh — The Final Bulletproof SOC Pipeline Orchestrator
 # =============================================================================
 
 set -e
 
-# Configuration
+# --- Configuration ---
 HBASE_CONTAINER="hbase"
 HADOOP_MASTER="hadoop-master"
-SCRIPT_SRC="./batch_hbase.py"
-SCRIPT_DEST="/tmp/batch_hbase.py"
-SHC_JAR_URL="https://repo1.maven.org/maven2/com/hortonworks/shc/shc-core/1.1.0.3.1.5.3-3/shc-core-1.1.0.3.1.5.3-3-tests.jar"
-SHC_JAR_LOCAL="/tmp/shc-core.jar"
+WORKERS=("hadoop-worker1" "hadoop-worker2")
+SCRIPT_SRC="./batch_layer.py"
+SCRIPT_DEST="/root/batch_layer.py"
+
+# Updated HDFS Path
+HDFS_LOGS_PATH="/data/cybersecurity/logs"
 
 # Colors
-RED='\033[0;31m'; GREEN='\033[0;32m'; BLUE='\033[0;34m'; YELLOW='\033[1;33m'; NC='\033[0m'
+RED='\033[0;31m'; GREEN='\033[0;32m'; BLUE='\033[1;34m'; YELLOW='\033[1;33m'; NC='\033[0m'
 
 log_info()    { echo -e "${BLUE}[INFO]${NC}  $1"; }
 log_success() { echo -e "${GREEN}[OK]${NC}    $1"; }
@@ -22,80 +24,73 @@ log_warn()    { echo -e "${YELLOW}[WARN]${NC}  $1"; }
 log_error()   { echo -e "${RED}[ERROR]${NC} $1"; exit 1; }
 
 echo -e "${BLUE}============================================================${NC}"
-echo -e "${BLUE}        SOC BIG DATA PIPELINE — FULL SETUP & RUN            ${NC}"
+echo -e "${BLUE}         SOC BIG DATA PIPELINE — FULL SETUP & RUN           ${NC}"
 echo -e "${BLUE}============================================================${NC}"
 
-# 1. Check & Start YARN ResourceManager
-log_info "Verifying YARN ResourceManager..."
-RM_CHECK=$(docker exec $HADOOP_MASTER jps | grep "ResourceManager" || true)
-if [ -z "$RM_CHECK" ]; then
-    log_warn "ResourceManager is down. Starting YARN..."
-    docker exec $HADOOP_MASTER start-yarn.sh
-    sleep 5
-fi
-log_success "YARN is ready."
+# 1. Start Core Services
+log_info "Ensuring HDFS and YARN are running..."
+docker exec $HADOOP_MASTER start-dfs.sh || log_warn "HDFS might be already running"
+docker exec $HADOOP_MASTER start-yarn.sh || log_warn "YARN might be already running"
+sleep 5
 
-# 2. Check & Start HBase Thrift Server (Required for Happybase)
-log_info "Verifying HBase Thrift Server (Port 9090)..."
-THRIFT_CHECK=$(docker exec $HBASE_CONTAINER netstat -tulnp | grep 9090 || true)
-if [ -z "$THRIFT_CHECK" ]; then
-    log_warn "Thrift Server is down. Starting it..."
-    docker exec -d $HBASE_CONTAINER hbase thrift start -p 9090
-    sleep 3
-fi
-log_success "HBase Thrift is ready."
+# 2. HBase Thrift Server (Critical Bridge for Python)
+log_info "Starting HBase Thrift Server..."
+# We use -d to run in background, and check if it's already running
+docker exec -d $HBASE_CONTAINER hbase thrift start -p 9090 || true
+sleep 5
+log_success "Thrift Server is active on port 9090."
 
-# 3. Create/Reset HBase Tables
-log_info "Setting up HBase tables..."
+# 3. Create HBase Schema (Idempotent - No data loss)
+log_info "Synchronizing HBase tables..."
 docker exec -i "${HBASE_CONTAINER}" hbase shell << 'HBASE_EOF'
-def setup_table(name, cf, versions=1)
-  if list.include?(name)
-    puts "=> Table #{name} exists, recreating..."
-    disable name
-    drop name
+def create_if_not_exists(table, cf)
+  if !list.include?(table)
+    create table, { NAME => cf, VERSIONS => 1 }
+    puts "Created table #{table}"
+  else
+    puts "Table #{table} already exists. Skipping."
   end
-  create name, { NAME => cf, VERSIONS => versions, BLOOMFILTER => 'ROW' }
 end
-
-setup_table 'ip_reputation', 'info'
-setup_table 'attack_patterns', 'stats', 5
-setup_table 'threat_timeline', 'data'
+create_if_not_exists 'ip_reputation', 'info'
+create_if_not_exists 'attack_patterns', 'stats'
+create_if_not_exists 'threat_timeline', 'data'
+create_if_not_exists 'port_scans', 'info'
+create_if_not_exists 'top_ips', 'info'
+create_if_not_exists 'volume_analysis', 'info'
 exit
 HBASE_EOF
-log_success "HBase tables are clean and ready."
+log_success "HBase Schema ready."
 
-# 4. Prepare Spark Environment
-log_info "Copying Spark script to $HADOOP_MASTER..."
+# 4. Sync Dependencies on Master & Workers
+log_info "Installing Python dependencies (happybase, influxdb-client)..."
+DEPS="happybase influxdb-client"
+docker exec -i $HADOOP_MASTER pip install $DEPS --quiet
+for W in "${WORKERS[@]}"; do
+    docker exec -i $W pip install $DEPS --quiet
+done
+log_success "All nodes synchronized."
+
+# 5. Deploy Script
+log_info "Deploying Spark script to Master..."
+if [ ! -f "${SCRIPT_SRC}" ]; then log_error "Source file ${SCRIPT_SRC} not found!"; fi
 docker cp "${SCRIPT_SRC}" "${HADOOP_MASTER}:${SCRIPT_DEST}"
 
-log_info "Checking SHC connector JAR..."
-docker exec "${HADOOP_MASTER}" bash -c "
-    if [ ! -f ${SHC_JAR_LOCAL} ]; then
-        wget -q -O ${SHC_JAR_LOCAL} ${SHC_JAR_URL}
-        echo '[JAR] Downloaded SHC connector.'
-    fi
-"
+# 6. LAUNCH SPARK JOB
+echo -e "${YELLOW}------------------------------------------------------------${NC}"
+log_info "SUBMITTING SPARK JOB TO YARN..."
+log_info "Input: hdfs://${HDFS_LOGS_PATH}"
+echo -e "${YELLOW}------------------------------------------------------------${NC}"
 
-# 5. Install Python Dependencies on Workers
-log_info "Installing happybase on executors..."
-# We run this on master and assume shared env or handle it in the script via parallelize
-docker exec "${HADOOP_MASTER}" pip3 install happybase --quiet
+# Launching the job
+docker exec -it "${HADOOP_MASTER}" spark-submit \
+    --master yarn \
+    --deploy-mode client \
+    --driver-memory 1g \
+    --executor-memory 1g \
+    --num-executors 2 \
+    --executor-cores 1 \
+    "${SCRIPT_DEST}" "${HDFS_LOGS_PATH}"
 
-# 6. Launch Spark Job
 echo -e "${BLUE}------------------------------------------------------------${NC}"
-log_info "Submitting Spark Job to YARN Cluster..."
-docker exec "${HADOOP_MASTER}" bash -c "
-    spark-submit \
-        --master yarn \
-        --deploy-mode client \
-        --jars ${SHC_JAR_LOCAL} \
-        --conf spark.hbase.host=hbase:2181 \
-        --conf spark.executor.memory=2g \
-	--conf spark.driver.memory=1g \
-        ${SCRIPT_DEST}
-"
-echo -e "${BLUE}------------------------------------------------------------${NC}"
-
-log_success "Pipeline execution finished!"
-echo -e "${YELLOW}Check your HBase Web UI: http://localhost:16010${NC}"
-
+log_success "PIPELINE EXECUTION FINISHED!"
+echo -e "${BLUE}============================================================${NC}"

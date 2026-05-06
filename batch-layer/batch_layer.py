@@ -480,4 +480,3 @@ except Exception as e:
 
 # ─────────────────────────────────────────────────────────────────────────────
 print("\n✅ BATCH PROCESSING COMPLETE\n")
-spark.stop()

@@ -167,6 +167,8 @@ services:
       resources:
         limits:
           memory: 1G
+    ports:
+      - "8086:8086"
     environment:
       - DOCKER_INFLUXDB_INIT_MODE=setup
       - DOCKER_INFLUXDB_INIT_USERNAME=admin
@@ -186,6 +188,8 @@ services:
       resources:
         limits:
           memory: 512M
+    ports:
+      - "3000:3000"
     networks:
       cybernetwork:
         ipv4_address: 172.20.0.31

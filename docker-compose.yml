@@ -1,7 +1,7 @@
 version: "3.9"
 
 # ============================================================
-# Cybersecurity Threat Detection 
+# Cybersecurity Threat Detection - Optimized for Max Performance
 # ============================================================
 
 services:
@@ -17,17 +17,11 @@ services:
       - "9870:9870"
       - "9000:9000"
       - "8088:8088"
-    deploy:
-      resources:
-        limits:
-          memory: 4G    # Max for Driver + NameNode
-        reservations:
-          memory: 1G
     environment:
       - CLUSTER_NAME=cybersecurity-cluster
       - CORE_CONF_fs_defaultFS=hdfs://hadoop-master:9000
     volumes:
-      - hadoop_namenode:/hadoop/dfs/name
+      - ./hdfs_data/hadoop_namenode:/hadoop/dfs/name
       - ./scripts:/scripts
       - /tmp/partitions:/tmp/partitions
     networks:
@@ -41,16 +35,10 @@ services:
     hostname: hadoop-worker1
     tty: true
     stdin_open: true
-    deploy:
-      resources:
-        limits:
-          memory: 6G    # High limit for heavy spark batch
-        reservations:
-          memory: 2G
     environment:
       - CORE_CONF_fs_defaultFS=hdfs://hadoop-master:9000
     volumes:
-      - hadoop_datanode1:/hadoop/dfs/data
+      - ./hdfs_data/hadoop_datanode1:/hadoop/dfs/data
     depends_on:
       - hadoop-master
     networks:
@@ -64,16 +52,10 @@ services:
     hostname: hadoop-worker2
     tty: true
     stdin_open: true
-    deploy:
-      resources:
-        limits:
-          memory: 6G    # High limit for heavy spark batch
-        reservations:
-          memory: 2G
     environment:
       - CORE_CONF_fs_defaultFS=hdfs://hadoop-master:9000
     volumes:
-      - hadoop_datanode2:/hadoop/dfs/data
+      - ./hdfs_data/hadoop_datanode2:/hadoop/dfs/data
     depends_on:
       - hadoop-master
     networks:
@@ -90,10 +72,6 @@ services:
       - "16010:16010"
       - "16020:16020"
       - "9090:9090" # Thrift Port
-    deploy:
-      resources:
-        limits:
-          memory: 2G
     environment:
       HBASE_DOCKER_HOSTNAME: hbase
     volumes:
@@ -108,10 +86,6 @@ services:
     container_name: zookeeper
     environment:
       ZOOKEEPER_CLIENT_PORT: 2181
-    deploy:
-      resources:
-        limits:
-          memory: 512M
     healthcheck:
       test: ["CMD-SHELL", "echo stat | nc localhost 2181 || exit 1"]
       interval: 10s
@@ -129,16 +103,13 @@ services:
     depends_on:
       zookeeper:
         condition: service_healthy
-    deploy:
-      resources:
-        limits:
-          memory: 1G
     environment:
       KAFKA_BROKER_ID: 1
       KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
       KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://172.20.0.10:29092,PLAINTEXT_HOST://localhost:9092
       KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
       KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
     networks:
       cybernetwork:
         ipv4_address: 172.20.0.10
@@ -151,10 +122,6 @@ services:
       CASSANDRA_CLUSTER_NAME: sitcn-cluster
       MAX_HEAP_SIZE: 1G  # Optimized Cassandra Heap
       HEAP_NEWSIZE: 200M
-    deploy:
-      resources:
-        limits:
-          memory: 2G
     networks:
       cybernetwork:
         ipv4_address: 172.20.0.20
@@ -163,10 +130,6 @@ services:
   influxdb:
     image: influxdb:2.7
     container_name: influxdb
-    deploy:
-      resources:
-        limits:
-          memory: 1G
     ports:
       - "8086:8086"
     environment:
@@ -184,10 +147,6 @@ services:
   grafana:
     image: grafana/grafana:latest
     container_name: grafana
-    deploy:
-      resources:
-        limits:
-          memory: 512M
     ports:
       - "3000:3000"
     networks:
@@ -196,9 +155,6 @@ services:
 
 
 volumes:
-  hadoop_namenode:
-  hadoop_datanode1:
-  hadoop_datanode2:
   hbase_data:
   kafka_data:
   zookeeper_data:

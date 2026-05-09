@@ -15,7 +15,7 @@ KAFKA_TOPIC     = os.getenv("KAFKA_TOPIC",      "cybersecurity-logs")
 CASSANDRA_HOST  = os.getenv("CASSANDRA_HOST",   "172.20.0.20")
 CASSANDRA_PORT  = int(os.getenv("CASSANDRA_PORT", "9042"))
 CASSANDRA_KS    = "cybersecurity"
-CHECKPOINT      = "/Guard/spark_checkpoints/speed_layer"
+CHECKPOINT      = "/tmp/spark_checkpoints/speed_layer"
 
 # InfluxDB config – fixed URL (no more unreachable localhost)
 INFLUX_URL    = os.getenv("INFLUX_URL",    "http://172.20.0.30:8086")  # <-- changed

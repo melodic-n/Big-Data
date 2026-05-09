@@ -55,6 +55,36 @@ docker exec influxdb influx bucket create \
 
 log_success "InfluxDB bucket ready."
 
+# =============================================================================
+# 2.5 Verification of Hadoop/Spark Nodes (JPS Check)
+# =============================================================================
+log_step "Verifying Hadoop/Spark Daemons via JPS..."
+
+# 1. Check NameNode and ResourceManager on Master
+MASTER_JPS=$(docker exec "$HADOOP_MASTER" jps)
+for daemon in "NameNode" "ResourceManager"; do
+    if echo "$MASTER_JPS" | grep -q "$daemon"; then
+        log_success "$daemon is running on Master."
+    else
+        log_error "$daemon is NOT running on Master. Check Hadoop logs."
+    fi
+done
+
+# 2. Check DataNodes on Workers (if they exist in your setup)
+# Assuming you have workers named hadoop-worker1, hadoop-worker2
+WORKERS=("hadoop-worker1" "hadoop-worker2")
+for W in "${WORKERS[@]}"; do
+    # Vérifier si le container existe avant de lancer jps
+    if [ "$(docker ps -q -f name=$W)" ]; then
+        WORKER_JPS=$(docker exec "$W" jps)
+        if echo "$WORKER_JPS" | grep -q "DataNode"; then
+            log_success "DataNode is running on $W."
+        else
+            log_warn "DataNode is NOT running on $W. Spark might have limited storage access."
+        fi
+    fi
+done
+
 # 3. Launch Spark Streaming
 log_step "Deploying Spark Streaming to Hadoop Master..."
 docker exec -u root "$HADOOP_MASTER" pip3 install requests --quiet

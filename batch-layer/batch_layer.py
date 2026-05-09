@@ -332,20 +332,18 @@ timeline = logs \
     .withColumn("row_key", concat_ws("#", col("threat_label"), col("hour")))
 
 # 4. PORT SCANS — fenêtre glissante 5 min, colonnes identiques à write_partition
-port_scans = (
-    logs
-    .filter(col("protocol") == "TCP")
-    .groupBy("source_ip", spark_window(col("timestamp"), "5 minutes"))
+port_scans = logs.filter(col("protocol") == "TCP") \
+    .groupBy("source_ip", spark_window(col("timestamp"), "5 minutes")) \
     .agg(
         countDistinct("dest_ip").alias("distinct_destinations"),   
         count("*").alias("total_connections"),                     
         count(when(col("threat_label").isin(THREAT_LABELS), True)).alias("threat_connections"),         
-    ).filter(col("distinct_destinations") > 5)
-    .withColumn( "scan_score",(col("distinct_destinations") / col("total_connections")).cast(DoubleType()))
-    .withColumn("detection_date", col("window.start").cast(TimestampType()))
-    .drop("window")
+    ).filter(col("distinct_destinations") > 5) \
+    .withColumn( "scan_score",(col("distinct_destinations") / col("total_connections")).cast(DoubleType())) \
+    .withColumn("detection_date", col("window.start").cast(TimestampType())) \
+    .drop("window") \
     .withColumn( "row_key",concat_ws("#", col("source_ip"), col("detection_date").cast("string")))
-)
+
 
 # 5. TOP IPs — top 100 IPs malveillantes
 top_ips = logs.filter(col("threat_label").isin(THREAT_LABELS)) \

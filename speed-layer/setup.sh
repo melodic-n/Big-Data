@@ -85,6 +85,11 @@ for W in "${WORKERS[@]}"; do
     fi
 done
 
+log_step "Cleaning up previous Spark Jobs and Checkpoints..."
+docker exec "$HADOOP_MASTER" pkill -f spark-submit || true
+docker exec "$HADOOP_MASTER" rm -rf /tmp/spark_checkpoints || true 
+sleep 2
+
 # 3. Launch Spark Streaming
 log_step "Deploying Spark Streaming to Hadoop Master..."
 docker exec -u root "$HADOOP_MASTER" pip3 install requests --quiet

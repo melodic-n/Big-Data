@@ -3,7 +3,8 @@ from pyspark.sql.functions import (
     col, when, count, sum as spark_sum, avg,
     to_timestamp, to_date, current_timestamp,
     regexp_extract, concat_ws, date_trunc,
-    max as spark_max, lit, countDistinct, desc
+    max as spark_max, lit, countDistinct, desc,
+    window as spark_window      
 )
 from pyspark.sql.types import (
     StructType, StructField, StringType, LongType,
@@ -330,18 +331,21 @@ timeline = logs \
     ) \
     .withColumn("row_key", concat_ws("#", col("threat_label"), col("hour")))
 
-# 4. PORT SCANS — détection de scans réseau
-port_scans = logs.filter(col("protocol") == "TCP") \
-    .groupBy("source_ip") \
+# 4. PORT SCANS — fenêtre glissante 5 min, colonnes identiques à write_partition
+port_scans = (
+    logs
+    .filter(col("protocol") == "TCP")
+    .groupBy("source_ip", spark_window(col("timestamp"), "5 minutes"))
     .agg(
-        countDistinct("dest_ip").alias("distinct_destinations"),
-        count("*").alias("total_connections"),
-        count(when(col("threat_label").isin(THREAT_LABELS), True)).alias("threat_connections")
-    ) \
-    .filter(col("distinct_destinations") > 5) \
-    .withColumn("scan_score", col("distinct_destinations") / col("total_connections")) \
-    .withColumn("row_key", col("source_ip")) \
-    .withColumn("detection_date", to_timestamp(lit(partition_date + " 00:00:00")))
+        countDistinct("dest_ip").alias("distinct_destinations"),   
+        count("*").alias("total_connections"),                     
+        count(when(col("threat_label").isin(THREAT_LABELS), True)).alias("threat_connections"),         
+    ).filter(col("distinct_destinations") > 5)
+    .withColumn( "scan_score",(col("distinct_destinations") / col("total_connections")).cast(DoubleType()))
+    .withColumn("detection_date", col("window.start").cast(TimestampType()))
+    .drop("window")
+    .withColumn( "row_key",concat_ws("#", col("source_ip"), col("detection_date").cast("string")))
+)
 
 # 5. TOP IPs — top 100 IPs malveillantes
 top_ips = logs.filter(col("threat_label").isin(THREAT_LABELS)) \

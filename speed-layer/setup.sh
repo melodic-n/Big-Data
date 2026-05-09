@@ -1,60 +1,34 @@
 #!/bin/bash
-# =============================================================================
-# setup_speed.sh — Speed Layer Full Orchestrator (Bulletproof)
-# Kafka + Cassandra + Spark Streaming
-# =============================================================================
-
 set -e
 
-# --- Colors ---
-RED='\033[0;31m'; GREEN='\033[0;32m'; YELLOW='\033[1;33m'
-BLUE='\033[0;34m'; CYAN='\033[0;36m'; BOLD='\033[1m'; NC='\033[0m'
-
-log_info()    { echo -e "${CYAN}[INFO]${NC}  $*"; }
-log_success() { echo -e "${GREEN}[OK]${NC}    $*"; }
-log_warn()    { echo -e "${YELLOW}[WARN]${NC}  $*"; }
-log_error()   { echo -e "${RED}[ERROR]${NC} $*"; exit 1; }
-
-# --- Config ---
+# --- Configuration ---
 KAFKA_CONTAINER="kafka"
 CASSANDRA_CONTAINER="cassandra"
-TOPIC_NAME="cybersecurity-logs"
+HADOOP_MASTER="hadoop-master"
 CASS_KS="cybersecurity"
-SPARK_LOG="/tmp/spark_speed_layer.log"
-SPARK_PID_FILE="/tmp/spark_speed.pid"
+TOPIC_NAME="cybersecurity-logs"
+CSV_LOCAL_PATH="../data/cybersecurity_threat_detection_logs_streaming.csv"
+INFLUXDB_TOKEN="super-token"
+# Colors
+GREEN='\033[0;32m'; BLUE='\033[0;34m'; CYAN='\033[0;36m'; YELLOW='\033[1;33m'; NC='\033[0m'
 
-echo -e "${BLUE}${BOLD}============================================================${NC}"
-echo -e "${BLUE}${BOLD}   CYBERSECURITY SPEED LAYER — ALL-IN-ONE ORCHESTRATOR      ${NC}"
-echo -e "${BLUE}${BOLD}============================================================${NC}"
+log_step() { echo -e "${CYAN}[STEP]${NC} $1"; }
+log_success() { echo -e "${GREEN}[OK]${NC}   $1"; }
 
-# 1. Health Check
-log_info "Checking Docker containers..."
-for c in "$KAFKA_CONTAINER" "$CASSANDRA_CONTAINER"; do
-    if ! docker ps --format '{{.Names}}' | grep -q "^$c$"; then
-        log_error "Container '$c' is not running. Check 'docker-compose up -d'."
-    fi
-done
-log_success "All containers are running."
+echo -e "${BLUE}============================================================${NC}"
+echo -e "${BLUE}      CYBERSECURITY SPEED LAYER — ALL-IN-DOCKER             ${NC}"
+echo -e "${BLUE}============================================================${NC}"
 
-# 2. Wait for Cassandra (Critical)
-log_info "Waiting for Cassandra to be ready (this can take up to 2 mins)..."
-MAX_RETRIES=24; COUNT=0
-while ! docker exec "$CASSANDRA_CONTAINER" cqlsh -e "DESCRIBE KEYSPACES" > /dev/null 2>&1; do
-    [[ $COUNT -eq $MAX_RETRIES ]] && log_error "Cassandra timeout."
-    log_warn "Still waiting for Cassandra... ($((COUNT*5))s)"
-    sleep 5; ((COUNT++))
-done
-log_success "Cassandra is UP and listening."
+# 1. Resolve Cassandra IP
+CASS_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$CASSANDRA_CONTAINER")
 
-# 3. Create Cassandra Schema
-log_info "Injecting CQL Schema..."
+# 2. Setup Cassandra Schema
+log_step "Initializing Cassandra Schema..."
 docker exec -i "$CASSANDRA_CONTAINER" cqlsh <<EOF
+DROP KEYSPACE IF EXISTS $CASS_KS;
 CREATE KEYSPACE IF NOT EXISTS $CASS_KS WITH replication = {'class': 'SimpleStrategy', 'replication_factor': 1};
 USE $CASS_KS;
-DROP TABLE IF EXISTS cybersecurity.realtime_threats;
-DROP TABLE IF EXISTS cybersecurity.brute_force_alerts;
-DROP TABLE IF EXISTS cybersecurity.ip_threat_scores;
-DROP TABLE IF EXISTS cybersecurity.data_exfil_alerts;
+
 CREATE TABLE IF NOT EXISTS realtime_threats (
     source_ip TEXT, event_time TIMESTAMP, dest_ip TEXT, protocol TEXT, action TEXT, 
     threat_label TEXT, log_type TEXT, bytes_xfer BIGINT, user_agent TEXT, request_path TEXT,
@@ -62,104 +36,48 @@ CREATE TABLE IF NOT EXISTS realtime_threats (
     PRIMARY KEY (source_ip, event_time)
 ) WITH CLUSTERING ORDER BY (event_time DESC) AND default_time_to_live = 86400;
 
-CREATE TABLE IF NOT EXISTS brute_force_alerts (
-    source_ip TEXT, window_start TIMESTAMP, failed_count INT, 
-    threat_score FLOAT, detected_at TIMESTAMP,
-    PRIMARY KEY (source_ip, window_start)
-);
-
-CREATE TABLE IF NOT EXISTS ip_threat_scores (
-    source_ip TEXT PRIMARY KEY,
-    threat_score FLOAT,
-    attack_count INT,
-    last_seen TIMESTAMP,
-    is_blocked BOOLEAN,
-    attack_types set<TEXT>
-);
-
-CREATE TABLE IF NOT EXISTS data_exfil_alerts (
-    source_ip text,
-    window_start timestamp,
-    total_bytes bigint,
-    threat_score float,
-    detected_at timestamp,
-    PRIMARY KEY (source_ip, window_start)
-) WITH CLUSTERING ORDER BY (window_start DESC);
+CREATE TABLE IF NOT EXISTS brute_force_alerts (source_ip TEXT, window_start TIMESTAMP, failed_count INT, threat_score FLOAT, detected_at TIMESTAMP, PRIMARY KEY (source_ip, window_start));
+CREATE TABLE IF NOT EXISTS ip_threat_scores (source_ip TEXT PRIMARY KEY, threat_score FLOAT, attack_count INT, last_seen TIMESTAMP, is_blocked BOOLEAN, attack_types set<TEXT>);
+CREATE TABLE IF NOT EXISTS data_exfil_alerts (source_ip text, window_start timestamp, total_bytes bigint, threat_score float, detected_at timestamp, PRIMARY KEY (source_ip, window_start)) WITH CLUSTERING ORDER BY (window_start DESC);
 EOF
-log_success "Cassandra tables created."
+log_success "Cassandra ready."
 
-# 4. Kafka Topic Setup
-log_info "Setting up Kafka topic..."
-docker exec "$KAFKA_CONTAINER" kafka-topics --create --topic "$TOPIC_NAME" \
-    --bootstrap-server localhost:9092 --partitions 3 --if-not-exists || true
-log_success "Topic '$TOPIC_NAME' is ready."
+# --- InfluxDB Setup ---
+log_step "Configuring InfluxDB Bucket..."
 
-# 5. Resolve Cassandra Internal IP
-CASS_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$CASSANDRA_CONTAINER")
-log_info "Cassandra Internal IP: $CASS_IP"
+docker exec influxdb influx bucket delete --name speed-bucket --org cyber-org --token super-token || true
+docker exec influxdb influx bucket create \
+    --name speed-bucket \
+    --org cyber-org \
+    --token $INFLUXDB_TOKEN \
+    --description "Bucket for Real-time Speed Layer" \
+    || echo -e "${YELLOW}[INFO]${NC} Bucket might already exist, skipping..."
 
-CHECKPOINT_BASE="/Guard/spark_checkpoints"
-SPEED_LAYER_PATH="$CHECKPOINT_BASE/speed_layer"
+log_success "InfluxDB bucket ready."
 
-echo "[*] Starting Setup for Spark Checkpoint Location..."
-
-# 1. Create the directories if they don't exist
-if [ ! -d "$SPEED_LAYER_PATH" ]; then
-    echo "[+] Creating directory: $SPEED_LAYER_PATH"
-    sudo mkdir -p "$SPEED_LAYER_PATH"
-else
-    echo "[!] Directory already exists. Cleaning old checkpoints..."
-    # Cleaning is important to avoid schema mismatch errors
-    sudo rm -rf "$SPEED_LAYER_PATH"/*
-fi
-
-# 2. Set the correct ownership (Current User)
-echo "[+] Setting permissions for user: $USER"
-sudo chown -R $USER:$USER "$CHECKPOINT_BASE"
-sudo chmod -R 755 "$CHECKPOINT_BASE"
-
-# 3. Verify the space on /Guard
-echo "[*] Current storage status for /Guard:"
-df -h /Guard
-
-echo "[SUCCESS] Checkpoint location is ready at: $SPEED_LAYER_PATH"
-
-# 6. Launch Spark Streaming (Background)
-log_info "Launching Spark Streaming job..."
-if [[ -f "$SPARK_PID_FILE" ]]; then
-    kill -9 $(cat "$SPARK_PID_FILE") 2>/dev/null || true
-fi
-
-# We use nohup to keep Spark running in background
-nohup spark-submit \
-    --master "local[2]" \
-    --driver-memory 2g \
-    --executor-memory 2g \
-    --conf "spark.driver.extraJavaOptions=-Djava.net.preferIPv4Stack=true" \
+# 3. Launch Spark Streaming
+log_step "Deploying Spark Streaming to Hadoop Master..."
+docker exec -u root "$HADOOP_MASTER" pip3 install requests --quiet
+docker cp spark_streaming.py "$HADOOP_MASTER":/tmp/spark_streaming.py
+docker exec -d "$HADOOP_MASTER" bash -c "spark-submit \
+    --master local[2] \
     --packages org.apache.spark:spark-sql-kafka-0-10_2.12:3.4.1,com.datastax.spark:spark-cassandra-connector_2.12:3.4.0 \
-    --conf "spark.cassandra.connection.host=$CASS_IP" \
-    Spark_streaming.py > "$SPARK_LOG" 2>&1 &
+    --conf 'spark.cassandra.connection.host=$CASS_IP' \
+    /tmp/spark_streaming.py > /tmp/spark_speed_layer.log 2>&1"
+log_success "Spark Job running in background."
 
-echo $! > "$SPARK_PID_FILE"
-log_success "Spark job started (PID: $(cat $SPARK_PID_FILE)). Logs: tail -f $SPARK_LOG"
+# 4. Prepare & Run Producer inside Kafka Container
+log_step "Preparing Producer inside Kafka Container..."
+docker exec -it "$KAFKA_CONTAINER" kafka-topics --bootstrap-server localhost:9092 --create --topic "$TOPIC_NAME" --if-not-exists --partitions 1 --replication-factor 1
 
-# --- Step 10: Start Producer INSIDE Container ---
-log_info "Preparing Producer inside Kafka container..."
-
-# 1. Copy files to Container
+# Copy files to Kafka
 docker cp producer.py "$KAFKA_CONTAINER":/tmp/producer.py
-docker cp ../data/cybersecurity_threat_detection_logs_streaming.csv "$KAFKA_CONTAINER":/tmp/cybersecurity_threat_detection_logs_streaming.csv
+docker cp "$CSV_LOCAL_PATH" "$KAFKA_CONTAINER":/tmp/streaming_data.csv
 
-# 2. Install pip if missing and then install kafka-python-ng
-log_info "Installing dependencies inside container..."
-docker exec -u root "$KAFKA_CONTAINER" bash -c "
-    if ! command -v pip &> /dev/null && ! command -v pip3 &> /dev/null; then
-        echo 'Installing pip...'
-        apt-get update && apt-get install -y python3-pip
-    fi
-    python3 -m pip install kafka-python-ng --quiet
-"
-log_success "Dependencies ready."
-# 3. Run Producer
-log_info "Running Producer..."
+# Install dependencies inside Kafka container
+log_step "Launching Producer..."
+docker exec -it "$KAFKA_CONTAINER" bash -c "pip3 install kafka-python-ng --quiet"
 docker exec -it "$KAFKA_CONTAINER" python3 /tmp/producer.py
+echo -e "${GREEN}============================================================${NC}"
+echo -e "${GREEN}    SPEED LAYER IS ACTIVE (ALL LOGS STREAMED)               ${NC}"
+echo -e "${GREEN}============================================================${NC}"

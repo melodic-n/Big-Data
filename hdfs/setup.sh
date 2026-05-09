@@ -48,6 +48,7 @@ docker exec $CONTAINER_NAME hdfs dfs -mkdir -p $HDFS_LOGS_BASE
 log_info "Cleaning up stale processes..."
 pkill -f partition_logs.py || true
 pkill -f "docker exec" || true
+sudo chown -R ubuntu /tmp
 
 # 4. Run the Partitioning Script (The Core Step)
 log_info "Launching Parallel Partitioning Engine..."

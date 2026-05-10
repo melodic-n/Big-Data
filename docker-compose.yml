@@ -1,0 +1,172 @@
+version: "3.9"
+
+# ============================================================
+# Cybersecurity Threat Detection - Optimized for Max Performance
+# ============================================================
+
+services:
+
+  # ─── HADOOP NAMENODE (Spark Driver runs here) ──────────────
+  hadoop-master:
+    image: liliasfaxi/hadoop-cluster:latest
+    container_name: hadoop-master
+    hostname: hadoop-master
+    tty: true
+    stdin_open: true
+    ports:
+      - "9870:9870"
+      - "9000:9000"
+      - "8088:8088"
+    environment:
+      - CLUSTER_NAME=cybersecurity-cluster
+      - CORE_CONF_fs_defaultFS=hdfs://hadoop-master:9000
+    volumes:
+      - ./hdfs_data/hadoop_namenode:/hadoop/dfs/name
+      - ./scripts:/scripts
+      - /tmp/partitions:/tmp/partitions
+    networks:
+      cybernetwork:
+        ipv4_address: 172.20.0.2
+
+  # ─── HADOOP DATANODE 1 (Spark Executor 1) ──────────────────
+  hadoop-worker1:
+    image: liliasfaxi/hadoop-cluster:latest
+    container_name: hadoop-worker1
+    hostname: hadoop-worker1
+    tty: true
+    stdin_open: true
+    environment:
+      - CORE_CONF_fs_defaultFS=hdfs://hadoop-master:9000
+    volumes:
+      - ./hdfs_data/hadoop_datanode1:/hadoop/dfs/data
+    depends_on:
+      - hadoop-master
+    networks:
+      cybernetwork:
+        ipv4_address: 172.20.0.3
+
+  # ─── HADOOP DATANODE 2 (Spark Executor 2) ──────────────────
+  hadoop-worker2:
+    image: liliasfaxi/hadoop-cluster:latest
+    container_name: hadoop-worker2
+    hostname: hadoop-worker2
+    tty: true
+    stdin_open: true
+    environment:
+      - CORE_CONF_fs_defaultFS=hdfs://hadoop-master:9000
+    volumes:
+      - ./hdfs_data/hadoop_datanode2:/hadoop/dfs/data
+    depends_on:
+      - hadoop-master
+    networks:
+      cybernetwork:
+        ipv4_address: 172.20.0.4
+
+  # ─── HBASE ────────────────────────────────────────────────
+  hbase:
+    image: dajobe/hbase:latest
+    container_name: hbase
+    hostname: hbase
+    ports:
+      - "16000:16000"
+      - "16010:16010"
+      - "16020:16020"
+      - "9090:9090" # Thrift Port
+    environment:
+      HBASE_DOCKER_HOSTNAME: hbase
+    volumes:
+      - hbase_data:/data/hbase
+    networks:
+      cybernetwork:
+        ipv4_address: 172.20.0.8
+
+  # ─── ZOOKEEPER ────────────────────────────────────────────
+  zookeeper:
+    image: confluentinc/cp-zookeeper:7.5.0
+    container_name: zookeeper
+    environment:
+      ZOOKEEPER_CLIENT_PORT: 2181
+    healthcheck:
+      test: ["CMD-SHELL", "echo stat | nc localhost 2181 || exit 1"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+      start_period: 10s
+    networks:
+      cybernetwork:
+        ipv4_address: 172.20.0.9
+
+  # ─── KAFKA ────────────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    depends_on:
+      zookeeper:
+        condition: service_healthy
+    environment:
+      KAFKA_BROKER_ID: 1
+      KAFKA_ZOOKEEPER_CONNECT: zookeeper:2181
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    networks:
+      cybernetwork:
+        ipv4_address: 172.20.0.10
+
+  # ─── CASSANDRA ────────────────────────────────────────────
+  cassandra:
+    image: cassandra:4.1
+    container_name: cassandra
+    environment:
+      CASSANDRA_CLUSTER_NAME: sitcn-cluster
+      MAX_HEAP_SIZE: 1G  # Optimized Cassandra Heap
+      HEAP_NEWSIZE: 200M
+    networks:
+      cybernetwork:
+        ipv4_address: 172.20.0.20
+
+  # ─── INFLUXDB ─────────────────────────────────────────────
+  influxdb:
+    image: influxdb:2.7
+    container_name: influxdb
+    ports:
+      - "8086:8086"
+    environment:
+      - DOCKER_INFLUXDB_INIT_MODE=setup
+      - DOCKER_INFLUXDB_INIT_USERNAME=admin
+      - DOCKER_INFLUXDB_INIT_PASSWORD=admin123
+      - DOCKER_INFLUXDB_INIT_ORG=cyber-org
+      - DOCKER_INFLUXDB_INIT_BUCKET=cyber-bucket
+      - DOCKER_INFLUXDB_INIT_ADMIN_TOKEN=super-token
+    networks:
+      cybernetwork:
+        ipv4_address: 172.20.0.30
+
+  # ─── GRAFANA ──────────────────────────────────────────────
+  grafana:
+    image: grafana/grafana:latest
+    container_name: grafana
+    ports:
+      - "3000:3000"
+    networks:
+      cybernetwork:
+        ipv4_address: 172.20.0.31
+
+
+volumes:
+  hbase_data:
+  kafka_data:
+  zookeeper_data:
+  zookeeper_log:
+  cassandra_data:
+  influxdb_data:
+  grafana_data:
+
+networks:
+  cybernetwork:
+    driver: bridge
+    ipam:
+      config:
+        - subnet: 172.20.0.0/24
+          gateway: 172.20.0.1

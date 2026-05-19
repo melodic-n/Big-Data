@@ -43,7 +43,7 @@ def start_streaming():
     except FileNotFoundError:
         print(f"[ERROR] File not found: {CSV_PATH}")
     except KeyboardInterrupt:
-        print("\n[!] User stopped the process.")
+        print("\n[!] User stoppe the process.")
     except Exception as e:
         print(f"[ERROR] {e}")
     finally:

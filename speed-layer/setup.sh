@@ -29,7 +29,7 @@ echo -e "${BLUE}============================================================${NC
 echo -e "${BLUE}      CYBERSECURITY SPEED LAYER — FULL AUTOMATION           ${NC}"
 echo -e "${BLUE}============================================================${NC}"
 
-# 1. Network Discovery
+# 1. Network Discovery first
 # Resolve the internal Docker IP of the Cassandra container for Spark connectivity.
 log_step "Resolving Cassandra IP..."
 CASS_IP=$(docker inspect -f '{{range .NetworkSettings.Networks}}{{.IPAddress}}{{end}}' "$CASSANDRA_CONTAINER")
@@ -97,7 +97,7 @@ done
 log_step "Ensuring HDFS is out of Safe Mode..."
 docker exec "$HADOOP_MASTER" hdfs dfsadmin -safemode leave
 
-# 5. Spark Environment Reset
+# 5. Spark Environment 
 # Kills stale Spark sessions and wipes checkpoints to force "earliest" offset processing.
 log_step "Wiping Spark Checkpoints and killing old jobs..."
 docker exec "$HADOOP_MASTER" pkill -f spark-submit || true
@@ -105,7 +105,7 @@ docker exec "$HADOOP_MASTER" rm -rf /tmp/spark_checkpoints || true
 docker exec hadoop-master hdfs dfs -rm -r /tmp/spark_checkpoints || true
 sleep 2
 
-# 6. Spark Streaming Deployment
+# 6. Spark Streaming Deploy
 # Deploys code to the Hadoop Master and submits the streaming job.
 log_step "Deploying Spark Streaming Job..."
 docker exec -u root "$HADOOP_MASTER" pip3 install requests --quiet

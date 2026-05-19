@@ -111,7 +111,7 @@ echo "${ALL_PARTITIONS}" | while read p; do
     echo "         → year=${Y}/month=${M}/day=${D}"
 done
 
-# Read last processed partition (stored inside the container to survive reruns)
+# Read last processed partition (stored inside the container)
 log_info "Checking last processed partition..."
 LAST_PARTITION=$(docker exec $HADOOP_MASTER bash -c \
     "[ -f ${LAST_PARTITION_FILE} ] && cat ${LAST_PARTITION_FILE} || echo ''")
@@ -125,7 +125,7 @@ else
     log_info "No previous run found → Full first run"
 fi
 
-# Build list of pending partitions (everything after LAST_PARTITION)
+# Build list of pending partitions
 PENDING_PARTITIONS=""
 if [ -z "${LAST_PARTITION}" ]; then
     PENDING_PARTITIONS="${ALL_PARTITIONS}"
@@ -181,7 +181,6 @@ while read -u 3 CURRENT_PARTITION; do
     log_info "            Path: ${CURRENT_HDFS_PATH}"
     echo ""
 
-    # ✅ </dev/null : docker exec n'a plus accès au stdin de la boucle
     docker exec "${HADOOP_MASTER}" spark-submit \
         --master yarn \
         --deploy-mode client \
